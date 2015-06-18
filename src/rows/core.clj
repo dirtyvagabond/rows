@@ -38,7 +38,7 @@
   (mapcat in-rows files))
 
 (defn aline [row attrs]
-  [(for [k attrs] (or (get row k) ""))])
+  [(for [k attrs] (get row k ""))])
 
 (defn delete [files]
   (doseq [f files] (fs/delete f)))
