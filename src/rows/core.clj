@@ -14,23 +14,28 @@
 ; use slingshot for errors(?)
 ; support verbose logging level
 
+(def TSV-FORMAT {:reader #(csv/parse-csv % :delimiter \tab)
+                 :writer #(csv/write-csv % :delimiter \tab)})
+
 (def FORMATS
   {".csv" {:reader csv/parse-csv
-           :writer csv/write-csv}})
+           :writer csv/write-csv}
+   ".tab" TSV-FORMAT
+   ".tsv" TSV-FORMAT})
 
 (defn lookup-format [f]
   (let [ext (fs/extension f)]
     (or (get FORMATS (str/lower-case ext))
         (throw (Exception.
-                (str "Unrecognized file extension: " ext " (" f ")"))))))
+                (format "Unrecognized file extension (%s): %s" ext f))))))
 
 (defn output-from-name [n outputs]
   (first (filter #(= n (fs/base-name %)) outputs)))
 
-(defn in-rows [f]
-  (let [[hdr & rows] ((-> f lookup-format :reader) (io/reader f))]
+(defn in-rows [file]
+  (let [[hdr & rows] ((:reader (lookup-format file)) (io/reader file))]
     (for [r rows]
-      (apply hash-map (interleave hdr r)))))
+      (zipmap hdr r))))
 
 (defn merge-in-rows
   "Returns a sequence of all the rows from all the files"
@@ -44,24 +49,30 @@
   (doseq [f files] (fs/delete f)))
 
 (defn write-rows
-  "Expects rows to be wrapped with metadata that indicates desired output target"
+  "Each row in rows may be wrapped with metadata indicating the desired output
+   target"
   [rows outputs attrs]
-  (delete outputs)
-  (doseq [row rows]
-    ;; row will be a hash-map. it may be wrapped in metadata indicating which 
-    ;; output it is meant for.
-    (let [out (or
-               (output-from-name (-> row meta :output) outputs)
-               (first outputs))
-          _   (assert out)
-          fmt (lookup-format out)]
-      (spit out ((:writer fmt) (aline row attrs)) :append true))))
+  (do
+    (delete outputs)
+    (doseq [row rows]
+      ;; row will be a hash-map. it may be wrapped in metadata indicating which 
+      ;; output it is meant for.
+      (let [out (-> row meta :output
+                    (output-from-name outputs)
+                    (or (first outputs))
+                    (doto assert))
+            fmt (lookup-format out)
+            line ((:writer fmt) (aline row attrs))]
+        (spit out line :append true)))))
+
+
+
 
 (comment
   ;; some testing:
   (def ROWS (merge-in-rows ["test/resources/simple1.csv" "test/resources/simple2.csv" "test/resources/simple3.csv"]))
   (def OUTPUTS ["out.csv"])
-  (write-rows ROWS  ["ID" "Last" "First"])
+  (write-rows ROWS OUTPUTS ["ID" "Last" "First"])
 
   ;; example client code:
   (defn tout [output row]
