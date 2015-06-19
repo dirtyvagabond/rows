@@ -14,6 +14,8 @@
 ; use slingshot for errors(?)
 ; support verbose logging level
 
+; Supported text file formats
+
 (def TSV-FORMAT {:parser #(csv/parse-csv % :delimiter \tab)
                  :formatter #(csv/write-csv % :delimiter \tab)})
 
@@ -28,6 +30,21 @@
     (or (get FORMATS (str/lower-case ext))
         (throw (Exception.
                 (format "Unrecognized file extension (%s): %s" ext f))))))
+
+
+; Helpers for file writer management
+
+(defn writer* [m file]
+  @(get (swap! m update-in [file] #(or % (delay (io/writer file)))) file))
+
+(defn write* [m file line]
+  (.write (writer* m file) line))
+
+(defn close* [m]
+  (doseq [[_ w] @m]
+    (.close @w))
+  (reset! m {}))
+
 
 (defn output-from-name [n outputs]
   (first (filter #(= n (fs/base-name %)) outputs)))
@@ -48,22 +65,11 @@
 (defn delete [files]
   (doseq [f files] (fs/delete f)))
 
-(def writers (atom {}))
-
-(defn +writer [file]
-  (swap! writers assoc file (io/writer file)))
-
-(defn close* []
-  (doseq [[_ w] @writers] (.close w)))
-
-(defn writer* [file]
-  (or (get @writers file) (+writer file)))
-
 (defn write-rows
   "Each row in rows may be wrapped with metadata indicating the desired output
    target"
   [rows outputs attrs]
-  (do
+  (let [writers (atom {})]
     (delete outputs)
     (doseq [row rows]
       ;; row will be a hash-map. it may be wrapped in metadata indicating which 
@@ -74,9 +80,8 @@
                         (doto assert))
             fmt (lookup-format outfile)
             line ((:formatter fmt) (aline row attrs))]
-        (println "file:" outfile ", wrtr: " (writer* outfile))
-        (.write (writer* outfile) line)))
-    (close*)))
+        (write* writers outfile line)))
+    (close* writers)))
 
 (comment
   ;; some testing:
