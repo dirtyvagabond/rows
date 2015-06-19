@@ -14,12 +14,12 @@
 ; use slingshot for errors(?)
 ; support verbose logging level
 
-(def TSV-FORMAT {:reader #(csv/parse-csv % :delimiter \tab)
-                 :writer #(csv/write-csv % :delimiter \tab)})
+(def TSV-FORMAT {:parser #(csv/parse-csv % :delimiter \tab)
+                 :formatter #(csv/write-csv % :delimiter \tab)})
 
 (def FORMATS
-  {".csv" {:reader csv/parse-csv
-           :writer csv/write-csv}
+  {".csv" {:parser csv/parse-csv
+           :formatter csv/write-csv}
    ".tab" TSV-FORMAT
    ".tsv" TSV-FORMAT})
 
@@ -33,7 +33,7 @@
   (first (filter #(= n (fs/base-name %)) outputs)))
 
 (defn in-rows [file]
-  (let [[hdr & rows] ((:reader (lookup-format file)) (io/reader file))]
+  (let [[hdr & rows] ((:parser (lookup-format file)) (io/reader file))]
     (for [r rows]
       (zipmap hdr r))))
 
@@ -48,6 +48,17 @@
 (defn delete [files]
   (doseq [f files] (fs/delete f)))
 
+(def writers (atom {}))
+
+(defn +writer [file]
+  (swap! writers assoc file (io/writer file)))
+
+(defn close* []
+  (doseq [[_ w] @writers] (.close w)))
+
+(defn writer* [file]
+  (or (get @writers file) (+writer file)))
+
 (defn write-rows
   "Each row in rows may be wrapped with metadata indicating the desired output
    target"
@@ -57,16 +68,15 @@
     (doseq [row rows]
       ;; row will be a hash-map. it may be wrapped in metadata indicating which 
       ;; output it is meant for.
-      (let [out (-> row meta :output
-                    (output-from-name outputs)
-                    (or (first outputs))
-                    (doto assert))
-            fmt (lookup-format out)
-            line ((:writer fmt) (aline row attrs))]
-        (spit out line :append true)))))
-
-
-
+      (let [outfile (-> row meta :output
+                        (output-from-name outputs)
+                        (or (first outputs))
+                        (doto assert))
+            fmt (lookup-format outfile)
+            line ((:formatter fmt) (aline row attrs))]
+        (println "file:" outfile ", wrtr: " (writer* outfile))
+        (.write (writer* outfile) line)))
+    (close*)))
 
 (comment
   ;; some testing:
