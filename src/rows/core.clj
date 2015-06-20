@@ -1,5 +1,6 @@
 (ns rows.core
   (:require [clojure-csv.core :as csv]
+            [cheshire.core :as jsn]
             [fs.core :as fs]
             [clojure.string :as str]
             [clojure.java.io :as io]))
@@ -13,21 +14,34 @@
 ;   - allow user to speicify output headers, per-output
 ; use slingshot for errors(?)
 ; support verbose logging level
+; support automatic resume from hard crash
+;   - maybe use java.io.LineNumberReader or similar?
 
 ; Supported text file formats
 
-(def TSV-FORMAT {:parser #(csv/parse-csv % :delimiter \tab)
-                 :formatter #(csv/write-csv % :delimiter \tab)})
+(defn sv-formatter [delim]
+  (fn [row headers]
+    (csv/write-csv [(for [k headers] (get row k ""))] :delimiter delim)))
 
-(def FORMATS
-  {".csv" {:parser csv/parse-csv
-           :formatter csv/write-csv}
-   ".tab" TSV-FORMAT
-   ".tsv" TSV-FORMAT})
+(def FORMATTERS
+  ;; Formatters that know how to take a row and return a line of text
+  {".csv"  (sv-formatter \,)
+   ".tab"  (sv-formatter \tab)
+   ".tsv"  (sv-formatter \tab)})
 
-(defn lookup-format [f]
+(def PARSERS
+  ;; Parsers that know how to take a file of a specific format and return
+  ;; a sequence of hash-maps representing rows from the file
+  {".json" (fn [file]
+             (map jsn/parse-string (line-seq (io/reader file))))
+   ".csv" (fn [file]
+            (let [[hdr & rows] (csv/parse-csv (io/reader file))]
+              (for [r rows]
+                (zipmap hdr r))))})
+
+(defn by-ext [m f]
   (let [ext (fs/extension f)]
-    (or (get FORMATS (str/lower-case ext))
+    (or (get m (str/lower-case ext))
         (throw (Exception.
                 (format "Unrecognized file extension (%s): %s" ext f))))))
 
@@ -42,25 +56,19 @@
 
 (defn close* [m]
   (doseq [[_ w] @m]
-    (.close @w))
-  (reset! m {}))
+    (.close @w)))
 
 
 (defn output-from-name [n outputs]
   (first (filter #(= n (fs/base-name %)) outputs)))
 
 (defn in-rows [file]
-  (let [[hdr & rows] ((:parser (lookup-format file)) (io/reader file))]
-    (for [r rows]
-      (zipmap hdr r))))
+  ((by-ext PARSERS file) file))
 
 (defn merge-in-rows
   "Returns a sequence of all the rows from all the files"
   [files]
   (mapcat in-rows files))
-
-(defn aline [row attrs]
-  [(for [k attrs] (get row k ""))])
 
 (defn delete [files]
   (doseq [f files] (fs/delete f)))
@@ -71,17 +79,18 @@
   [rows outputs attrs]
   (let [writers (atom {})]
     (delete outputs)
-    (doseq [row rows]
-      ;; row will be a hash-map. it may be wrapped in metadata indicating which 
-      ;; output it is meant for.
-      (let [outfile (-> row meta :output
-                        (output-from-name outputs)
-                        (or (first outputs))
-                        (doto assert))
-            fmt (lookup-format outfile)
-            line ((:formatter fmt) (aline row attrs))]
-        (write* writers outfile line)))
-    (close* writers)))
+    (try
+      (doseq [row rows]
+        ;; row will be a hash-map. it may be wrapped in metadata indicating which 
+        ;; output it is meant for.
+        (let [outfile (-> row meta :output
+                          (output-from-name outputs)
+                          (or (first outputs))
+                          (doto assert))
+              fmt (by-ext FORMATTERS outfile)
+              line (fmt row attrs)]
+          (write* writers outfile line)))
+      (finally (close* writers)))))
 
 (comment
   ;; some testing:

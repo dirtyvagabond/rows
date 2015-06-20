@@ -6,4 +6,5 @@
   :dependencies [[org.clojure/clojure "1.5.1"]
                  [fs "1.3.2"]
                  [slingshot "0.10.3"]
-                 [clojure-csv "2.0.1"]])
+                 [clojure-csv "2.0.1"]
+                 [cheshire "5.5.0"]])
