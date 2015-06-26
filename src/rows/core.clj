@@ -23,21 +23,26 @@
   (fn [row headers]
     (csv/write-csv [(for [k headers] (get row k ""))] :delimiter delim)))
 
+(defn sv-parser [delim]
+  (fn [file]
+    (let [[hdr & rows] (csv/parse-csv (io/reader file) :delimiter delim)]
+      (for [r rows]
+        (zipmap hdr r)))))
+
 (def FORMATTERS
   ;; Formatters that know how to take a row and return a line of text
   {".csv"  (sv-formatter \,)
    ".tab"  (sv-formatter \tab)
-   ".tsv"  (sv-formatter \tab)})
+   ".tsv"  (sv-formatter \tab)
+   ".json" (fn [row _] (format "%s\n" (jsn/generate-string row)))})
 
 (def PARSERS
   ;; Parsers that know how to take a file of a specific format and return
   ;; a sequence of hash-maps representing rows from the file
   {".json" (fn [file]
              (map jsn/parse-string (line-seq (io/reader file))))
-   ".csv" (fn [file]
-            (let [[hdr & rows] (csv/parse-csv (io/reader file))]
-              (for [r rows]
-                (zipmap hdr r))))})
+   ".csv" (sv-parser \,)
+   ".tsv" (sv-parser \tab)})
 
 (defn by-ext [m f]
   (let [ext (fs/extension f)]
@@ -77,13 +82,13 @@
 (defn guess-at-headers [rows]
   (distinct (mapcat keys (take 1000 rows))))
 (def HEADER-POLICY
-  {".json" false
-   ".csv" true
-   ".tab" true
-   ".tsv" true})
+  {".json" :no
+   ".csv" :yes
+   ".tab" :yes
+   ".tsv" :yes})
 (defn write-headers [writers outputs headers]
   (doseq [outfile outputs]
-    (when (by-ext HEADER-POLICY outfile)
+    (when (= :yes (by-ext HEADER-POLICY outfile))
       (let [fmt (by-ext FORMATTERS outfile)
             line (fmt (into {} (for [h headers] [h h])) headers)]
         (write* writers outfile line)))))
