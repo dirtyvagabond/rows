@@ -73,24 +73,44 @@
 (defn delete [files]
   (doseq [f files] (fs/delete f)))
 
+;; TODO: a header policy that isn't insane
+(defn guess-at-headers [rows]
+  (distinct (mapcat keys (take 1000 rows))))
+(def HEADER-POLICY
+  {".json" false
+   ".csv" true
+   ".tab" true
+   ".tsv" true})
+(defn write-headers [writers outputs headers]
+  (doseq [outfile outputs]
+    (when (by-ext HEADER-POLICY outfile)
+      (let [fmt (by-ext FORMATTERS outfile)
+            line (fmt (into {} (for [h headers] [h h])) headers)]
+        (write* writers outfile line)))))
+
 (defn write-rows
-  "Each row in rows may be wrapped with metadata indicating the desired output
+  "Writes rows (a sequence of hash-maps) to outputs.
+
+   Each row in rows may be wrapped with metadata indicating the desired output 
    target"
-  [rows outputs attrs]
-  (let [writers (atom {})]
-    (delete outputs)
-    (try
-      (doseq [row rows]
-        ;; row will be a hash-map. it may be wrapped in metadata indicating which 
-        ;; output it is meant for.
-        (let [outfile (-> row meta :output
-                          (output-from-name outputs)
-                          (or (first outputs))
-                          (doto assert))
-              fmt (by-ext FORMATTERS outfile)
-              line (fmt row attrs)]
-          (write* writers outfile line)))
-      (finally (close* writers)))))
+  ([rows outputs headers]
+     (let [writers (atom {})]
+       (delete outputs)
+       (write-headers writers outputs headers)
+       (try
+         (doseq [row rows]
+           ;; row will be a hash-map. it may be wrapped in metadata indicating which 
+           ;; output it is meant for.
+           (let [outfile (-> row meta :output
+                             (output-from-name outputs)
+                             (or (first outputs))
+                             (doto assert))
+                 fmt (by-ext FORMATTERS outfile)
+                 line (fmt row headers)]
+             (write* writers outfile line)))
+         (finally (close* writers)))))
+  ([rows outputs]
+     (write-rows rows outputs (guess-at-headers rows))))
 
 (comment
   ;; some testing:
